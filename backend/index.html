@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conversation Analysis Chatbot</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            max-width: 1400px;
+            width: 100%;
+        }
+        
+        @media (max-width: 1024px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .card {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .card-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            font-size: 20px;
+            font-weight: bold;
+        }
+        
+        .card-content {
+            padding: 20px;
+            flex: 1;
+            overflow-y: auto;
+            max-height: 500px;
+        }
+        
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: 600px;
+        }
+        
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-bottom: 20px;
+            padding-right: 10px;
+        }
+        
+        .messages::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .messages::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        
+        .messages::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 10px;
+        }
+        
+        .message {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .message.user {
+            justify-content: flex-end;
+        }
+        
+        .message-content {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 10px;
+            word-wrap: break-word;
+        }
+        
+        .message.user .message-content {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .message.bot .message-content {
+            background: #f0f0f0;
+            color: #333;
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .input-group input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        .input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .input-group button {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: transform 0.2s;
+        }
+        
+        .input-group button:hover {
+            transform: translateY(-2px);
+        }
+        
+        .input-group button:active {
+            transform: translateY(0);
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        
+        .stat-box {
+            background: #f9f9f9;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .tabs {
+            display: flex;
+            border-bottom: 2px solid #eee;
+            margin-bottom: 15px;
+        }
+        
+        .tab {
+            padding: 10px 15px;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+            background: none;
+            border: none;
+            font-size: 14px;
+            font-weight: bold;
+            color: #999;
+        }
+        
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .topic-item, .checkpoint-item {
+            background: #f9f9f9;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .topic-keywords {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 8px;
+        }
+        
+        .keyword {
+            background: #e8eef7;
+            color: #667eea;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #667eea;
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+        
+        .persona-section {
+            margin-bottom: 20px;
+        }
+        
+        .persona-title {
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        
+        .persona-item {
+            background: #f9f9f9;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin-bottom: 5px;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Chatbot Section -->
+        <div class="card">
+            <div class="card-header">💬 Conversation Chatbot</div>
+            <div class="chat-container" style="padding: 20px; display: flex; flex-direction: column;">
+                <div class="messages" id="messages"></div>
+                <div class="input-group">
+                    <input 
+                        type="text" 
+                        id="messageInput" 
+                        placeholder="Ask me anything about the conversations..." 
+                        autocomplete="off"
+                    >
+                    <button onclick="sendMessage()">Send</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Analysis Section -->
+        <div class="card">
+            <div class="card-header">📊 Analysis Dashboard</div>
+            <div class="card-content">
+                <div class="tabs">
+                    <button class="tab active" onclick="switchTab('stats')">Stats</button>
+                    <button class="tab" onclick="switchTab('topics')">Topics</button>
+                    <button class="tab" onclick="switchTab('checkpoints')">Checkpoints</button>
+                    <button class="tab" onclick="switchTab('persona')">Persona</button>
+                </div>
+                
+                <!-- Stats Tab -->
+                <div id="stats" class="tab-content active">
+                    <div class="stats-grid">
+                        <div class="stat-box">
+                            <div class="stat-label">Total Messages</div>
+                            <div class="stat-value" id="totalMessages">-</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">Topics Detected</div>
+                            <div class="stat-value" id="totalTopics">-</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">Checkpoints</div>
+                            <div class="stat-value" id="totalCheckpoints">-</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">System Status</div>
+                            <div class="stat-value" id="systemStatus">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Topics Tab -->
+                <div id="topics" class="tab-content">
+                    <div id="topicsList"></div>
+                </div>
+                
+                <!-- Checkpoints Tab -->
+                <div id="checkpoints" class="tab-content">
+                    <div id="checkpointsList"></div>
+                </div>
+                
+                <!-- Persona Tab -->
+                <div id="persona" class="tab-content">
+                    <div id="personaList"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // API endpoint - change this for different deployments
+        const API_URL = 'http://localhost:5000/api';
+        
+        let stats = {};
+        
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStats();
+            loadTopics();
+            loadCheckpoints();
+            loadPersona();
+            
+            // Allow Enter key to send messages
+            document.getElementById('messageInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    sendMessage();
+                }
+            });
+            
+            // Add welcome message
+            addMessage('Welcome! I\'m analyzing conversations to understand habits, personality, and communication style. Ask me anything!', 'bot');
+        });
+        
+        function loadStats() {
+            fetch(`${API_URL}/stats`)
+                .then(r => r.json())
+                .then(data => {
+                    stats = data;
+                    document.getElementById('totalMessages').textContent = data.total_messages || '-';
+                    document.getElementById('totalTopics').textContent = data.total_topics || '-';
+                    document.getElementById('totalCheckpoints').textContent = data.total_checkpoints || '-';
+                    document.getElementById('systemStatus').textContent = data.system_initialized ? '✓ Ready' : '⚠ Loading';
+                })
+                .catch(e => {
+                    console.error('Error loading stats:', e);
+                    document.getElementById('systemStatus').textContent = '✗ Error';
+                });
+        }
+        
+        function loadTopics() {
+            fetch(`${API_URL}/topics`)
+                .then(r => r.json())
+                .then(data => {
+                    const topicsList = document.getElementById('topicsList');
+                    topicsList.innerHTML = '';
+                    
+                    data.topics.slice(0, 10).forEach(topic => {
+                        const div = document.createElement('div');
+                        div.className = 'topic-item';
+                        div.innerHTML = `
+                            <strong>Topic ${topic.id}</strong>
+                            <small>Messages ${topic.start_message}-${topic.end_message} (${topic.num_messages} messages)</small>
+                            <div class="topic-keywords">
+                                ${topic.keywords.map(kw => `<span class="keyword">${kw}</span>`).join('')}
+                            </div>
+                        `;
+                        topicsList.appendChild(div);
+                    });
+                })
+                .catch(e => console.error('Error loading topics:', e));
+        }
+        
+        function loadCheckpoints() {
+            fetch(`${API_URL}/checkpoints`)
+                .then(r => r.json())
+                .then(data => {
+                    const checkpointsList = document.getElementById('checkpointsList');
+                    checkpointsList.innerHTML = '';
+                    
+                    data.checkpoints.forEach(cp => {
+                        const div = document.createElement('div');
+                        div.className = 'checkpoint-item';
+                        div.innerHTML = `
+                            <strong>Checkpoint ${cp.id}</strong>
+                            <small>Messages ${cp.start_message}-${cp.end_message}</small>
+                            <p style="margin-top: 8px; font-size: 12px; color: #666;">${cp.summary.substring(0, 100)}...</p>
+                        `;
+                        checkpointsList.appendChild(div);
+                    });
+                })
+                .catch(e => console.error('Error loading checkpoints:', e));
+        }
+        
+        function loadPersona() {
+            fetch(`${API_URL}/persona`)
+                .then(r => r.json())
+                .then(data => {
+                    const personaList = document.getElementById('personaList');
+                    personaList.innerHTML = '';
+                    
+                    for (const [user, persona] of Object.entries(data.personas)) {
+                        const div = document.createElement('div');
+                        div.className = 'persona-section';
+                        
+                        const habits = persona.habits || {};
+                        const mentionedHabits = Object.keys(habits).filter(h => habits[h].mentioned);
+                        
+                        const comm = persona.communication_style || {};
+                        
+                        div.innerHTML = `
+                            <div class="persona-title">${user.toUpperCase()}</div>
+                            <div class="persona-item"><strong>Tone:</strong> ${comm.tone || 'unknown'}</div>
+                            <div class="persona-item"><strong>Habits:</strong> ${mentionedHabits.join(', ') || 'N/A'}</div>
+                            <div class="persona-item"><strong>Expressiveness:</strong> ${comm.expressiveness || 'unknown'}</div>
+                        `;
+                        
+                        personaList.appendChild(div);
+                    }
+                })
+                .catch(e => console.error('Error loading persona:', e));
+        }
+        
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            // Add user message
+            addMessage(message, 'user');
+            input.value = '';
+            
+            // Show loading indicator
+            const loadingId = 'loading-' + Date.now();
+            addMessage(`<span class="loading"></span> Processing...`, 'bot', loadingId);
+            
+            // Send to chatbot
+            fetch(`${API_URL}/chatbot`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ question: message })
+            })
+            .then(r => r.json())
+            .then(data => {
+                // Remove loading message
+                const loadingEl = document.getElementById(loadingId);
+                if (loadingEl) {
+                    loadingEl.remove();
+                }
+                
+                // Add bot response
+                addMessage(data.answer, 'bot');
+            })
+            .catch(e => {
+                const loadingEl = document.getElementById(loadingId);
+                if (loadingEl) {
+                    loadingEl.remove();
+                }
+                addMessage('Sorry, there was an error processing your request.', 'bot');
+                console.error('Error:', e);
+            });
+        }
+        
+        function addMessage(text, sender, id = null) {
+            const messagesDiv = document.getElementById('messages');
+            const messageEl = document.createElement('div');
+            messageEl.className = 'message ' + sender;
+            if (id) messageEl.id = id;
+            
+            const contentEl = document.createElement('div');
+            contentEl.className = 'message-content';
+            contentEl.innerHTML = text;
+            
+            messageEl.appendChild(contentEl);
+            messagesDiv.appendChild(messageEl);
+            
+            // Scroll to bottom
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(el => {
+                el.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(el => {
+                el.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+        }
+    </script>
+</body>
+</html>
