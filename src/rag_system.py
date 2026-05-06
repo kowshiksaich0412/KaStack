@@ -1,9 +1,9 @@
 import json
+import re
 import numpy as np
 from typing import List, Dict
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
 import pickle
 import os
 
@@ -20,19 +20,38 @@ class RAGSystem:
         
         if use_embeddings:
             try:
+                from sentence_transformers import SentenceTransformer
                 self.model = SentenceTransformer(model_name)
             except:
                 print("Warning: Could not load sentence transformer, falling back to TF-IDF")
                 self.use_embeddings = False
-                self.vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
+                self.vectorizer = self._make_vectorizer()
         else:
-            self.vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
+            self.vectorizer = self._make_vectorizer()
         
         self.messages = []
         self.topics = []
         self.checkpoints = []
         self.embeddings_cache = {}
         self.fitted = False
+
+    def _normalize_text(self, text: str) -> str:
+        text = text.lower()
+        text = re.sub(r"http\S+|www\.\S+", " ", text)
+        text = re.sub(r"[^a-z0-9\s']", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _make_vectorizer(self) -> TfidfVectorizer:
+        return TfidfVectorizer(
+            preprocessor=self._normalize_text,
+            max_features=12000,
+            min_df=2,
+            max_df=0.75,
+            ngram_range=(1, 2),
+            stop_words='english',
+            sublinear_tf=True,
+            norm='l2'
+        )
         
     def build_index(self, messages: List[Dict], topics: List[Dict], checkpoints: List[Dict]):
         """Build RAG index from messages, topics, and checkpoints"""
@@ -51,6 +70,12 @@ class RAGSystem:
     def _build_tfidf_index(self):
         """Build TF-IDF index"""
         message_texts = [msg.get('text', '') for msg in self.messages]
+        if not any(text.strip() for text in message_texts):
+            self.tfidf_matrix = self.vectorizer.fit_transform(['empty'])
+            self.topic_tfidf = None
+            self.checkpoint_tfidf = None
+            return
+
         self.tfidf_matrix = self.vectorizer.fit_transform(message_texts)
         
         # Also vectorize topic summaries and checkpoints
@@ -122,17 +147,25 @@ class RAGSystem:
         query_vector = self.vectorizer.transform([query])
         similarities = cosine_similarity(query_vector, self.tfidf_matrix)[0]
         
-        top_indices = np.argsort(similarities)[-top_k:][::-1]
+        top_indices = np.argsort(similarities)[-max(top_k * 4, top_k):][::-1]
         
         results = []
+        seen = set()
         for idx in top_indices:
-            if similarities[idx] > 0.01:  # Filter out very low matches
+            if similarities[idx] > 0.02:
+                message_text = self.messages[idx].get('text', '')
+                dedupe_key = self._normalize_text(message_text)[:160]
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
                 results.append({
                     'message_idx': self.messages[idx].get('global_idx', idx),
-                    'text': self.messages[idx].get('text', ''),
+                    'text': message_text,
                     'user_id': self.messages[idx].get('user_id', 1),
                     'similarity': float(similarities[idx])
                 })
+                if len(results) >= top_k:
+                    break
         
         return results
     
@@ -173,7 +206,7 @@ class RAGSystem:
         
         results = []
         for idx in top_indices:
-            if similarities[idx] > 0.1:
+            if similarities[idx] > 0.02:
                 topic = self.topics[idx]
                 results.append({
                     'topic_id': topic.get('topic_id', idx),
@@ -201,7 +234,7 @@ class RAGSystem:
         
         results = []
         for idx in top_indices:
-            if similarities[idx] > 0.1:
+            if similarities[idx] > 0.02:
                 checkpoint = self.checkpoints[idx]
                 results.append({
                     'checkpoint_id': checkpoint.get('checkpoint_id', idx),

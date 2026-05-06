@@ -1,12 +1,12 @@
 import csv
 import json
 import re
-from typing import List, Dict, Tuple
-from collections import defaultdict
-from datetime import datetime
+from typing import List, Dict
+from collections import Counter, defaultdict
 import numpy as np
+from sklearn.feature_extraction import text
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.cluster import KMeans
 import nltk
 from nltk.tokenize import sent_tokenize
 from nltk.corpus import stopwords
@@ -21,6 +21,19 @@ try:
     nltk.data.find('corpora/stopwords')
 except LookupError:
     nltk.download('stopwords')
+
+try:
+    nltk.data.find('taggers/averaged_perceptron_tagger')
+except LookupError:
+    nltk.download('averaged_perceptron_tagger')
+
+
+def clean_text(value: str) -> str:
+    value = value.lower()
+    value = re.sub(r"http\S+|www\.\S+", " ", value)
+    value = re.sub(r"[^a-z\s]", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
 
 class ConversationParser:
     """Parse and structure conversations from CSV"""
@@ -95,18 +108,82 @@ class ConversationParser:
 
 
 class TopicDetector:
-    """Detect topic changes in conversations using semantic similarity"""
+    """Detect topics using KMeans clustering on TF-IDF vectors"""
     
-    def __init__(self, window_size: int = 5):
-        self.window_size = window_size
-        self.vectorizer = TfidfVectorizer(max_features=500, stop_words='english')
-        
-    def detect_topics(self, messages: List[Dict], similarity_threshold: float = 0.4) -> List[Dict]:
+    def __init__(self, n_clusters: int = 8):
         """
-        Detect topic changes using semantic similarity
-        Topics change when similarity drops below threshold
+        Initialize topic detector
+        n_clusters: number of topics to detect
         """
-        if len(messages) < self.window_size:
+        self.n_clusters = n_clusters
+        custom_words = [
+            "like",
+            "yeah",
+            "okay",
+            "hello",
+            "hi",
+            "thanks",
+            "thank",
+            "well",
+            "user",
+            "name",
+            "today",
+            "love",
+            "good",
+            "great",
+            "fun",
+            "cool",
+            "nice",
+            "awesome",
+            "amazing",
+            "best",
+            "favorite",
+            "really",
+            "sounds",
+        ]
+        self.custom_stopwords = text.ENGLISH_STOP_WORDS.union(custom_words)
+        self.stop_words = set(self.custom_stopwords).union(stopwords.words('english'))
+        self.vectorizer = TfidfVectorizer(
+            stop_words=list(self.custom_stopwords),
+            max_df=0.6,
+            min_df=10,
+            ngram_range=(1, 3),
+            max_features=3000,
+        )
+
+    def _normalize_text(self, text: str) -> str:
+        return clean_text(text)
+
+    def _noun_only_text(self, value: str) -> str:
+        """Keep nouns so clusters represent subjects instead of sentiment."""
+        cleaned = clean_text(value)
+        tokens = re.findall(r"\b[a-z]{3,}\b", cleaned)
+        tokens = [token for token in tokens if token not in self.stop_words]
+
+        if not tokens:
+            return ""
+
+        tagged_tokens = nltk.pos_tag(tokens)
+        nouns = [
+            token
+            for token, tag in tagged_tokens
+            if tag in {"NN", "NNS", "NNP", "NNPS"} and token not in self.stop_words
+        ]
+
+        return " ".join(nouns)
+
+    def _target_cluster_count(self, message_count: int) -> int:
+        """Choose enough clusters to avoid one-topic collapse while staying stable."""
+        if message_count < 2:
+            return 1
+        return min(self.n_clusters, message_count)
+    
+    def detect_topics(self, messages: List[Dict]) -> List[Dict]:
+        """
+        Detect topics using KMeans clustering
+        """
+        if len(messages) < 2:
+            # Too few messages, return all as one topic
             return [{
                 'topic_id': 0,
                 'start_idx': 0,
@@ -115,103 +192,126 @@ class TopicDetector:
                 'keywords': self._extract_keywords(messages)
             }]
         
-        # Extract text for similarity analysis
-        texts = [msg['text'] for msg in messages]
+        # Extract text for clustering
+        texts = [self._noun_only_text(msg.get('text', '')) for msg in messages]
+        usable_messages = [(idx, msg, text) for idx, (msg, text) in enumerate(zip(messages, texts)) if text]
+
+        if len(usable_messages) < 2:
+            return self._fallback_topic(messages)
         
         try:
-            tfidf_matrix = self.vectorizer.fit_transform(texts)
-        except:
-            # Fallback if vectorization fails
-            return [{
-                'topic_id': 0,
-                'start_idx': 0,
-                'end_idx': len(messages) - 1,
-                'messages': messages,
-                'keywords': self._extract_keywords(messages)
-            }]
-        
-        # Calculate sliding window similarities
-        topics = []
-        current_topic_start = 0
-        current_topic_messages = []
-        
-        for i in range(len(messages)):
-            current_topic_messages.append(messages[i])
+            # Build TF-IDF matrix
+            tfidf_matrix = self.vectorizer.fit_transform([text for _, _, text in usable_messages])
             
-            # Check for topic shift every window_size messages
-            if i > 0 and i % self.window_size == 0:
-                # Calculate similarity between current window and next
-                if i + self.window_size < len(messages):
-                    try:
-                        curr_window = tfidf_matrix[max(0, i-self.window_size):i]
-                        next_window = tfidf_matrix[i:min(i+self.window_size, len(messages))]
-                        
-                        if curr_window.shape[0] > 0 and next_window.shape[0] > 0:
-                            similarity = cosine_similarity(
-                                curr_window.mean(axis=0),
-                                next_window.mean(axis=0)
-                            )[0, 0]
-                            
-                            # Topic shift detected
-                            if similarity < similarity_threshold:
-                                topics.append({
-                                    'topic_id': len(topics),
-                                    'start_idx': current_topic_start,
-                                    'end_idx': i - 1,
-                                    'messages': current_topic_messages[:-1],
-                                    'keywords': self._extract_keywords(current_topic_messages[:-1]),
-                                    'similarity': similarity
-                                })
-                                current_topic_start = i
-                                current_topic_messages = [messages[i]]
-                    except:
-                        pass
-        
-        # Add final topic
-        if current_topic_messages:
-            topics.append({
-                'topic_id': len(topics),
-                'start_idx': current_topic_start,
-                'end_idx': len(messages) - 1,
-                'messages': current_topic_messages,
-                'keywords': self._extract_keywords(current_topic_messages),
-            })
-        
-        # Ensure we have at least one topic
-        if not topics:
-            topics = [{
-                'topic_id': 0,
-                'start_idx': 0,
-                'end_idx': len(messages) - 1,
-                'messages': messages,
-                'keywords': self._extract_keywords(messages)
-            }]
-        
-        return topics
+            n_clusters = self._target_cluster_count(len(usable_messages))
+            
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+            labels = kmeans.fit_predict(tfidf_matrix)
+            cluster_keywords = self._extract_cluster_keywords(kmeans, top_k=8)
+            
+            # Group messages by cluster
+            clusters = defaultdict(list)
+            for (original_idx, msg, _), label in zip(usable_messages, labels):
+                clusters[int(label)].append((original_idx, msg))
+            
+            # Create topic entries ordered by first message index
+            topics = []
+            for cluster_id, message_indices in sorted(clusters.items()):
+                message_indices.sort(key=lambda x: x[0])
+                
+                start_idx = message_indices[0][0]
+                end_idx = message_indices[-1][0]
+                topic_messages = [msg for _, msg in message_indices]
+                
+                topics.append({
+                    'topic_id': len(topics),
+                    'start_idx': start_idx,
+                    'end_idx': end_idx,
+                    'messages': topic_messages,
+                    'keywords': cluster_keywords.get(cluster_id, self._extract_keywords(topic_messages, top_k=8)),
+                    'num_messages': len(topic_messages)
+                })
+            
+            # Sort by start_idx
+            topics.sort(key=lambda x: x['start_idx'])
+            
+            return topics if topics else self._fallback_topic(messages)
+            
+        except Exception as e:
+            print(f"Topic detection error: {e}, using fallback")
+            return self._fallback_topic(messages)
     
-    def _extract_keywords(self, messages: List[Dict], top_k: int = 5) -> List[str]:
-        """Extract top keywords from a group of messages"""
+    def _fallback_topic(self, messages: List[Dict]) -> List[Dict]:
+        """Fallback when clustering fails"""
+        # Split into N roughly equal topics
+        n = self._target_cluster_count(len(messages))
+        chunk_size = len(messages) // n
+        
+        topics = []
+        for i in range(n):
+            start = i * chunk_size
+            end = (i + 1) * chunk_size if i < n - 1 else len(messages)
+            
+            if end > start:
+                chunk = messages[start:end]
+                topics.append({
+                    'topic_id': i,
+                    'start_idx': start,
+                    'end_idx': end - 1,
+                    'messages': chunk,
+                    'keywords': self._extract_keywords(chunk),
+                    'num_messages': len(chunk)
+                })
+        
+        return topics if topics else [{
+            'topic_id': 0,
+            'start_idx': 0,
+            'end_idx': len(messages) - 1,
+            'messages': messages,
+            'keywords': self._extract_keywords(messages),
+            'num_messages': len(messages)
+        }]
+    
+    def _extract_cluster_keywords(self, kmeans: KMeans, top_k: int = 8) -> Dict[int, List[str]]:
+        feature_names = self.vectorizer.get_feature_names_out()
+        cluster_keywords = {}
+
+        for cluster_id, center in enumerate(kmeans.cluster_centers_):
+            top_indices = np.argsort(center)[::-1]
+            keywords = []
+            seen_parts = set()
+
+            for idx in top_indices:
+                term = feature_names[idx]
+                term_parts = set(term.split())
+
+                if self._is_meaningful_keyword(term) and not term_parts.issubset(seen_parts):
+                    keywords.append(term)
+                    seen_parts.update(term_parts)
+                if len(keywords) >= top_k:
+                    break
+
+            cluster_keywords[cluster_id] = keywords
+
+        return cluster_keywords
+
+    def _is_meaningful_keyword(self, term: str) -> bool:
+        parts = term.split()
+        return all(
+            len(part) > 2 and part not in self.stop_words
+            for part in parts
+        )
+
+    def _extract_keywords(self, messages: List[Dict], top_k: int = 8) -> List[str]:
+        """Extract top keywords from messages"""
         if not messages:
             return []
         
-        # Combine all text
-        combined_text = ' '.join([msg['text'] for msg in messages]).lower()
+        combined_text = self._noun_only_text(' '.join([msg.get('text', '') for msg in messages]))
+        words = re.findall(r"\b[a-z]{3,}\b", combined_text)
         
-        # Simple keyword extraction based on frequency
-        words = combined_text.split()
-        stop_words = set(stopwords.words('english'))
-        
-        # Filter stopwords and short words
-        words = [w for w in words if w not in stop_words and len(w) > 3 and w.isalpha()]
-        
-        # Count frequencies
-        word_freq = defaultdict(int)
-        for word in words:
-            word_freq[word] += 1
-        
-        # Get top keywords
-        top_keywords = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)[:top_k]
-        return [kw[0] for kw in top_keywords]
+        words = [word for word in words if word not in self.stop_words]
+        return [word for word, _ in Counter(words).most_common(top_k)]
 
 
 class MessageCheckpointGenerator:
