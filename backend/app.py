@@ -395,10 +395,12 @@ if os.getenv("FLASK_SKIP_INIT", "").lower() not in {"1", "true"}:
 
 if __name__ == "__main__":
     logger.info("Starting Flask app...")
+    host = "0.0.0.0"
+    port = int(os.getenv("PORT", "5000"))
 
     if initialize_system():
-        logger.info("System initialized, starting server...")
-        app.run(debug=False, host="0.0.0.0", port=int(os.getenv("PORT", "5000")))
+        logger.info("System initialized, starting server on %s:%s", host, port)
+        app.run(host=host, port=port, debug=False)
     else:
         logger.error("Failed to initialize system")
         sys.exit(1)

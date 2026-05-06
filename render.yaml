@@ -6,7 +6,7 @@ services:
     autoDeployTrigger: commit
     healthCheckPath: /health
     buildCommand: pip install -r requirements.txt && python -m nltk.downloader punkt stopwords vader_lexicon averaged_perceptron_tagger
-    startCommand: cd backend && gunicorn --preload -w 1 -b 0.0.0.0:$PORT app:app
+    startCommand: gunicorn backend.app:app --bind 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.3
